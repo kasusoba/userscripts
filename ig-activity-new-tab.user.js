@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IG activity: open posts in new tab
 // @namespace    local.ig-activity-new-tab
-// @version      1.2
+// @version      1.3
 // @description  On Instagram "Your activity" pages (likes, comments, etc.), clicking a post opens it in a new tab so you keep your scroll position.
 // @match        https://www.instagram.com/*
 // @run-at       document-start
@@ -38,17 +38,33 @@
 
   const origPush = w.history.pushState;
   w.history.pushState = function (state, title, url) {
-    if (Date.now() < armedUntil && url && /^\/(p|reel|tv)\//.test(String(url))) {
-      const full = new URL(String(url), w.location.origin).href;
-      if (openedFor !== full) {
-        openedFor = full;
-        GM_openInTab(full, { active: false, insert: true });
-      }
-      // Throwing aborts Instagram's route change, so the list stays where it is.
-      throw new Error(BLOCK);
-    }
+    // Throwing aborts Instagram's route change, so the list stays where it is.
+    if (url && openInTab(url)) throw new Error(BLOCK);
     return origPush.apply(this, arguments);
   };
+
+  // Open a post link in a new tab if a click on a tile just asked for it. True when it did.
+  function openInTab(url) {
+    if (Date.now() >= armedUntil) return false;
+    const path = new URL(String(url), w.location.origin).pathname;
+    if (!/^\/(p|reel|tv)\//.test(path)) return false;
+    const full = w.location.origin + path;
+    if (openedFor !== full) {
+      openedFor = full;
+      GM_openInTab(full, { active: false, insert: true });
+    }
+    return true;
+  }
+
+  // After about two dozen aborted route changes, Instagram gives up on them and loads the
+  // post as a whole new page instead. The Navigation API (Chrome, Edge) can cancel that too.
+  if (w.navigation) {
+    w.navigation.addEventListener('navigate', (e) => {
+      if (e.destination.sameDocument || e.userInitiated || !e.cancelable) return;
+      const dest = new URL(e.destination.url);
+      if (dest.origin === w.location.origin && openInTab(dest.href)) e.preventDefault();
+    });
+  }
 
   w.addEventListener('error', (e) => {
     if (String(e.message).includes(BLOCK)) e.preventDefault();
